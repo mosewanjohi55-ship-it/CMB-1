@@ -1,0 +1,213 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crypto Mechanic Bot</title>
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.umd.min.js"></script>
+<style>
+* { box-sizing:border-box }
+body {
+  background:#10131a;color:#fff;
+  font-family:Arial,sans-serif;
+  padding:20px;margin:0
+}
+.container {max-width:450px;margin:auto}
+h1 {color:#f3ba2f}
+.card {
+  background:#1c2230;padding:18px;
+  border-radius:14px;margin:14px 0
+}
+input {
+  width:100%;padding:14px;margin:8px 0;
+  border:1px solid #444;border-radius:8px;
+  background:#10131a;color:white
+}
+button {
+  width:100%;padding:14px;border:0;
+  border-radius:8px;background:#f3ba2f;
+  font-weight:bold;margin:7px 0
+}
+button:disabled {opacity:.5}
+.small {color:#aaa;font-size:12px}
+.value {font-size:25px;font-weight:bold}
+#status {overflow-wrap:anywhere;color:#f3ba2f}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>⚙ CRYPTO MECHANIC BOT</h1>
+<p class="small">CMB v1.0 | BNB Smart Chain</p>
+
+<div class="card">
+<h3>Wallet connection</h3>
+<p id="wallet">Not connected</p>
+<button onclick="connectWallet()">CONNECT WALLET</button>
+</div>
+
+<div class="card">
+<h3>BNB Balance</h3>
+<div class="value" id="balance">0.0000 BNB</div>
+<p class="small">BNB Smart Chain Mainnet</p>
+<button onclick="refreshBalance()">REFRESH BALANCE</button>
+</div>
+
+<div class="card">
+<h3>Transfer BNB</h3>
+<input id="recipient" placeholder="Destination wallet address">
+<input id="amount" type="number" step="any"
+placeholder="Amount in BNB">
+<p class="small">Every transaction requires wallet approval.</p>
+<button id="send" onclick="sendBNB()">REVIEW & SEND</button>
+</div>
+
+<div class="card">
+<h3>Transaction status</h3>
+<p id="status">Waiting for connection...</p>
+</div>
+</div>
+
+<script>
+const CHAIN_ID = "0x38";
+const RPC = "https://bsc-dataseed.bnbchain.org";
+
+let provider;
+let signer;
+let address;
+
+function status(message) {
+  document.getElementById("status").textContent = message;
+}
+
+async function connectWallet() {
+  try {
+    if (!window.ethereum) {
+      throw new Error(
+        "Open CMB inside a compatible wallet DApp browser."
+      );
+    }
+
+    const accounts = await window.ethereum.request({
+      method: "eth_requestAccounts"
+    });
+
+    if (!accounts.length) throw new Error("No account selected.");
+
+    let chain = await window.ethereum.request({
+      method: "eth_chainId"
+    });
+
+    if (chain !== CHAIN_ID) {
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{chainId: CHAIN_ID}]
+      });
+    }
+
+    provider = new ethers.BrowserProvider(window.ethereum);
+    signer = await provider.getSigner();
+    address = await signer.getAddress();
+
+    document.getElementById("wallet").textContent =
+      address.slice(0, 8) + "..." + address.slice(-6);
+
+    status("Wallet connected successfully.");
+    await refreshBalance();
+
+  } catch (error) {
+    status(error.message);
+  }
+}
+
+async function refreshBalance() {
+  try {
+    if (!address) throw new Error("Connect your wallet first.");
+
+    const readProvider = new ethers.JsonRpcProvider(RPC);
+    const balance = await readProvider.getBalance(address);
+
+    document.getElementById("balance").textContent =
+      Number(ethers.formatEther(balance)).toFixed(6) + " BNB";
+
+  } catch (error) {
+    status(error.message);
+  }
+}
+
+async function sendBNB() {
+  const button = document.getElementById("send");
+
+  try {
+    if (!signer) throw new Error("Connect your wallet first.");
+
+    const to = document.getElementById("recipient").value.trim();
+    const amount = document.getElementById("amount").value.trim();
+
+    if (!ethers.isAddress(to))
+      throw new Error("Invalid destination address.");
+
+    if (!amount || !Number.isFinite(Number(amount)) ||
+        Number(amount) <= 0)
+      throw new Error("Enter a valid BNB amount.");
+
+    if (to.toLowerCase() === address.toLowerCase())
+      throw new Error("Destination is your own address.");
+
+    const value = ethers.parseEther(amount);
+
+    button.disabled = true;
+    status("Checking balance and preparing transaction...");
+
+    const balance = await provider.getBalance(address);
+    const network = await provider.getNetwork();
+
+    if (network.chainId !== 56n)
+      throw new Error("Wrong network. Switch to BSC.");
+
+    const fee = await provider.getFeeData();
+    const gas = await provider.estimateGas({
+      from: address, to, value
+    });
+
+    const estimatedCost = gas * fee.gasPrice;
+
+    if (balance < value + estimatedCost)
+      throw new Error("Insufficient BNB for amount and gas.");
+
+    const confirmed = confirm(
+      "SEND BNB?\n\nTo: " + to +
+      "\nAmount: " + amount +
+      "\nEstimated gas: " +
+      ethers.formatEther(estimatedCost) +
+      " BNB\n\nYour wallet will request final approval."
+    );
+
+    if (!confirmed) {
+      status("Transfer cancelled.");
+      return;
+    }
+
+    status("Waiting for wallet signature...");
+
+    const tx = await signer.sendTransaction({
+      to, value, gasLimit: gas
+    });
+
+    status("Submitted: " + tx.hash);
+
+    await tx.wait();
+
+    status("Transfer confirmed! Hash: " + tx.hash);
+
+    await refreshBalance();
+
+  } catch (error) {
+    status(error.shortMessage || error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
